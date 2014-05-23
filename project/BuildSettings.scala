@@ -19,7 +19,7 @@ object BuildSettings {
   
   val buildSettings = Defaults.defaultSettings ++ Seq(
     organization := "akka.duke",
-    version := "1.0.0-SNAPSHOT",
+    version := "1.0.1-SNAPSHOT",
     scalacOptions ++= Seq(),
     scalaVersion := Versions.scala,
     resolvers ++= Seq(
