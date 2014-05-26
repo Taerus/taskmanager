@@ -42,6 +42,8 @@ object SimpleWorker {
       var actions = mutable.MutableList.empty[DefDef]
       var reactions = mutable.MutableList.empty[DefDef]
 
+      var routConf: Tree = null
+
       body.collect {
         case ddef @ DefDef(defMods, defName, defTparams, defvparams, defTpt, defRhs) if defName.toString == "action" =>
           val newDdef = DefDef(defMods, defName, defTparams, List(defvparams.flatten), defTpt, defRhs)
@@ -50,6 +52,9 @@ object SimpleWorker {
 
         case ddef @ DefDef(_, defName, _, _, _, _) if defName.toString == "reaction" =>
           reactions += ddef
+
+        case vdef @ ValDef(_, valName, tpt, value) if valName.toString == "routerConfig" =>
+          routConf = value
 
         case tree =>
           newBody += tree
@@ -101,7 +106,11 @@ object SimpleWorker {
 
       val workerDef: Tree = ClassDef(mods, actorName, tparams, Template(newParents, self, newBody.toList))
 
-      val createWorker: Tree = q"""val $actorRef = context.actorOf(akka.actor.Props(new $actorName()), $strName)"""
+      val createWorker: Tree = {
+        var props: Tree =  q"akka.actor.Props(new $actorName())"
+        if(routConf != null) props = q"$props.withRouter($routConf)"
+        q"val $actorRef = context.actorOf($props, $strName)"
+      }
 
       val callMethod: Tree = {
         DefDef(Modifiers(), callName, action.tparams, action.vparamss, tq"scala.Unit", q"""$actorRef ! (..${action.vparamss.flatten.map(_.name)})""")
