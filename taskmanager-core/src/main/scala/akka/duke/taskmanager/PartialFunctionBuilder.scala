@@ -3,6 +3,10 @@ package akka.duke.taskmanager
 import scala.collection.immutable.Vector
 
 
+/**
+ * A builder class to chain partial functions
+ *
+ */
 class PartialFunctionBuilder[A, B] {
 
   type PF = PartialFunction[A, B]

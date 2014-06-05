@@ -5,8 +5,8 @@ import Message.Command
 import scala.collection.mutable
 
 
-/** A [[ComposableActor]] extending this trait can load a configuration file
-  * identified by an id (the class name by default) using a [[ConfigLoader]]
+/** A [[akka.duke.taskmanager.ComposableActor ComposableActor]] extending this trait can load a configuration file
+  * identified by an id (the class name by default) using a [[akka.duke.taskmanager.ConfigLoader ConfigLoader]]
   */
 trait Configurable { this: ComposableActor =>
   import Configurable._

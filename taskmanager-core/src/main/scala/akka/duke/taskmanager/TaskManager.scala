@@ -59,8 +59,14 @@ trait TaskManager extends ComposableActor with Configurable with Listener with A
         taskMap -= taskName
       }
 
-    case ListTask =>
-      sender ! taskMap.keys.toList
+    case ListTasks =>
+      sender ! TaskList(taskMap.keys.toList)
+
+    case ListAvailableTasks =>
+      sender ! AvailableTaskList(taskLoader.list())
+
+    case ListAvailableTasksFrom(sources) =>
+      sender ! AvailableTaskMap(taskLoader.list(sources))
 
     case TaskCmd(command, taskName) =>
       forwardCommand(taskMap.get(taskName), command, taskName)
@@ -91,9 +97,14 @@ object TaskManager {
 
 
   sealed trait TaskManagerRequest extends TaskManagerCommand with Request
-  case object ListTask                                              extends Request
+  case object ListTasks                                             extends Request
+  case object ListAvailableTasks                                    extends Request
+  case class  ListAvailableTasksFrom(sources: List[String])         extends Request
 
 
   sealed trait TaskManagerResponse                                  extends Responce
+  case class  TaskList(tasks: List[String])                         extends TaskManagerResponse
+  case class  AvailableTaskList(tasks: List[String])                extends TaskManagerResponse
+  case class  AvailableTaskMap(taskMap: Map[String, List[String]])  extends TaskManagerResponse
 
 }

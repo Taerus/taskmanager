@@ -5,6 +5,10 @@ import scala.collection.mutable
 import scala.language.experimental.macros
 import scala.reflect.macros.Context
 
+
+/**
+ *
+ */
 class SimpleWorker extends StaticAnnotation {
   def macroTransform(annottees: Any*) = macro SimpleWorker.simpleWorker_impl
 }

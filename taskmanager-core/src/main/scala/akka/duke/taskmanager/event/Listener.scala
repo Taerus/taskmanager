@@ -10,6 +10,7 @@ trait Listener { this: ComposableActor =>
     case e: Event => handleEvent(e)
   }
 
+
   def handleEvent(event: Event): Unit
 
 }

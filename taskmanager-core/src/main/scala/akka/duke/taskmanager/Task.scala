@@ -22,14 +22,14 @@ import akka.duke.taskmanager.Message._
   *   - (*) `Pause`     : change state from `Running` to `Paused`
   *   - `Restart`   : change state from `Running` | `Paused` to `Restarting`
   *   - `Terminate` : change state from `Running` to `Terminated`
-  *   - + commands from [[akka.duke.taskmanager.event.Publisher]]
+  *   - + commands from [[akka.duke.taskmanager.event.Publisher Publisher]]
   *   - + commands from [[Configurable]]
   *
   *   * : if the task inherit [[Pausable]]
   *
   * Requests handled by `Task` :
   *   - `GetState` : Respond by the current state
-  *   - + resquests from [[akka.duke.taskmanager.event.Publisher]]
+  *   - + resquests from [[akka.duke.taskmanager.event.Publisher Publisher]]
   *
   * Events :
   *   - StateChanged(newState: State)
@@ -60,8 +60,14 @@ trait Task extends ComposableActor with Publisher with Configurable with ActorLo
     log.info("config applied")
   }
 
+  /** The method called when the task goes into running state. If the task delegate its work to some actors, they have to
+    * be created here.
+    */
   def start(): Unit
 
+  /** The method called to stop the process. Kills all children actors by default. After this method have been executed
+    * the task data should have been reinitialized in order to be restarted later.
+    */
   def stop(): Unit = {
     context.children foreach context.stop
   }
@@ -71,13 +77,18 @@ trait Task extends ComposableActor with Publisher with Configurable with ActorLo
     start()
   }
 
-
+  /** This define the behavior of the task in Running state. */
   def runReceive: Receive = PartialFunction.empty[Any, Unit]
 
+  /** This define the behavior of the task in Paused state. */
   def pauseReceive: Receive = runReceive
 
+  /** This define the behavior of the task in Stopped or Terminated state. */
   def stopReceive: Receive = PartialFunction.empty[Any, Unit]
 
+  /** This define the global behavior of the task. Make sure the state behavior does not catch a message that should be
+    * processed in this one unless it is expected.
+    */
   def commonReceive: Receive = PartialFunction.empty[Any, Unit]
 
 
