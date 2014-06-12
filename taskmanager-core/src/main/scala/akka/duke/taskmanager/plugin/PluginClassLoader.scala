@@ -4,12 +4,9 @@ import java.util.jar.JarFile
 import scala.collection.mutable
 
 
-class PluginClassLoader(jarName: String,
-                     tempId: Long = -1L,
-                     parent: ClassLoader = ClassLoader.getSystemClassLoader)
+class PluginClassLoader(val jarPath: String,
+                        parent: ClassLoader = ClassLoader.getSystemClassLoader)
   extends ClassLoader(parent) {
-
-  val jarPath = path(jarName, tempId)
 
   protected val _dependencies: mutable.HashMap[String, Long] = mutable.HashMap.empty[String, Long]
   protected var built = false
@@ -55,7 +52,7 @@ class PluginClassLoader(jarName: String,
     }
 
     val cl = that.asInstanceOf[PluginClassLoader]
-    
+
     cl.jarPath == jarPath && cl._dependencies == _dependencies
   }
 
@@ -67,6 +64,10 @@ class PluginClassLoader(jarName: String,
 
 
 object PluginClassLoader {
+
+  def apply(jarName: String, tempId: Long = -1L, parent: ClassLoader = ClassLoader.getSystemClassLoader) = {
+    new PluginClassLoader(path(jarName, tempId), parent)
+  }
 
   def loadClassData(name: String, jarPath: String): Array[Byte] = {
     val jar = new JarFile(jarPath)

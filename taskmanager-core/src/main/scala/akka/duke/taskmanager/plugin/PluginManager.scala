@@ -9,23 +9,24 @@ import scala.collection.JavaConverters._
 import java.util.jar.JarFile
 import scala.collection.immutable.SortedSet
 import scala.concurrent.duration._
+import DirWatcher._
+import akka.actor.{PoisonPill, Cancellable, ActorSystem}
+import scala.concurrent.ExecutionContext.Implicits.global
 
 
 object PluginManager {
-
-  // (jarName, id)
-  type Id = (String, Long)
-
-  // pluginName -> pluginDef
-  type PluginDefMap = Map[String, PluginDef]
-
-  case class PluginDef(className: String, dependencies: Array[String])
 
   object RefreshPolicy extends Enumeration {
     type RefreshPolicy = Value
     val Dynamic, Manual, TimeoutSchedule, Timeout = Value
   }
-  import RefreshPolicy._
+  import RefreshPolicy.RefreshPolicy
+
+  object UpdatePolicy extends Enumeration {
+    type UpdatePolicy = Value
+    val OnRefresh, OnUse, Manual = Value
+  }
+  import UpdatePolicy.UpdatePolicy
 
   // jarName -> ..tempIds
   private val tempIds = mutable.HashMap.empty[String, SortedSet[Long]]
@@ -39,12 +40,18 @@ object PluginManager {
   // ( jarName, depTreeId ) -> classLoader
   private val classLoaders = mutable.HashMap.empty[Id, PluginClassLoader]
 
+  // ( jarName, tempId ) -> nbUses
+  private val uses = mutable.HashMap.empty[Id, Int]
+
   // ( jarName, depTreeId ) -> [depJarName -> depTempId]
   //  private val depTrees = mutable.HashMap.empty[Id, Map[String, Long]]
 
-
-  private var _refreshPolicy = Dynamic
-  private var _timeout: Duration = 1.minute
+  private val system = ActorSystem("pluginManager")
+  private var refreshSceduler: Cancellable = null
+  private var _refreshPolicy = RefreshPolicy.Dynamic
+  private var _updatePolicy = UpdatePolicy.OnUse
+  private var _timeout: FiniteDuration = 1.minute
+  private var dirWatcher = new DirWatcher("plugins/", extensionFilter("jar"), not(prefixFilter("~")))
   private var lastRefresh = 0L
   private var _pluginDirVersion = -1L -> Vector.empty[Id]
   private val added = mutable.Set.empty[Id]
@@ -53,9 +60,15 @@ object PluginManager {
   update()
 
 
+  def stop() {
+    stopRefreshScheduler()
+    system.shutdown()
+  }
+
   def refreshPolicy = _refreshPolicy
 
   def refreshPolicy_=(policy: RefreshPolicy) {
+    import RefreshPolicy._
     if (_refreshPolicy == TimeoutSchedule && policy != TimeoutSchedule) {
       stopRefreshScheduler()
     } else if (policy == TimeoutSchedule) {
@@ -64,10 +77,17 @@ object PluginManager {
     _refreshPolicy = policy
   }
 
+  def updatePolicy = _updatePolicy
+
+  def updatePolicy_=(policy: UpdatePolicy) {
+    _updatePolicy = policy
+  }
+
   def timeout = _timeout
 
-  def timeout_=(value: Duration) {
-    _timeout = timeout
+  def timeout_=(value: FiniteDuration) {
+    import RefreshPolicy._
+    _timeout = value
     if (_refreshPolicy == TimeoutSchedule) {
       stopRefreshScheduler()
       startRefreshScheduler()
@@ -75,7 +95,10 @@ object PluginManager {
   }
 
   def startRefreshScheduler() {
-    // TODO
+    if(refreshSceduler != null && !refreshSceduler.isCancelled) {
+      refreshSceduler.cancel()
+    }
+    refreshSceduler = system.scheduler.schedule(timeout, timeout)(refresh())
   }
 
   def stopRefreshScheduler() {
@@ -88,28 +111,37 @@ object PluginManager {
   }
 
   def needRefresh: Boolean = {
-    _refreshPolicy == Dynamic ||
-      (_refreshPolicy == Timeout && (System.currentTimeMillis - lastRefresh > _timeout.toMillis))
+    import RefreshPolicy._
+    (_refreshPolicy == Dynamic && dirWatcher.changes != null) ||
+    (_refreshPolicy == Timeout && (System.currentTimeMillis - lastRefresh > _timeout.toMillis))
   }
 
   def refresh(): Long = {
+    println("Refreshing")
     lastRefresh = System.currentTimeMillis
     var (version, lastIds) = _pluginDirVersion
     val ids = pluginIds()
     if (lastIds != ids) {
       val newIds = ids.toSet -- lastIds
+      val remIds = lastIds.toSet -- ids
       newIds.foreach(createTemp)
       added ++= newIds
-      removed ++= lastIds.toSet -- ids
+      removed ++= remIds
       added --= removed
       version = System.currentTimeMillis
       _pluginDirVersion = (version, ids)
-    }
-    version
-  }
+      println(s"  - ${newIds.size} (${added.size}) added")
+      println(s"  - ${remIds.size} (${removed.size}) removed")
 
-  def needUpdate: Boolean = {
-    added.nonEmpty || removed.nonEmpty
+      if(_updatePolicy == UpdatePolicy.OnRefresh) {
+        update()
+      } else {
+        println("update to apply")
+      }
+    }
+    println("no changes")
+
+    version
   }
 
   def update() {
@@ -118,10 +150,10 @@ object PluginManager {
       tempIds(jarName) = newIds
       pluginDefMaps += (jarName, tempId) -> scanJarForPlugins(jarName, tempId)
     }
+    added.clear()
 
     for ((jarName, id) <- removed) {
-      tempIds.get(jarName).foreach {
-        ids =>
+      tempIds.get(jarName).foreach { ids =>
           val newIds = ids - id
           if (newIds.isEmpty) {
             tempIds -= jarName
@@ -130,6 +162,12 @@ object PluginManager {
           }
       }
     }
+    removed.clear()
+  }
+
+  def check() {
+    if(needRefresh) refresh()
+    if(_updatePolicy == UpdatePolicy.OnUse) update()
   }
 
   def isLast(id: Id): Boolean = {
@@ -142,6 +180,10 @@ object PluginManager {
 
   def lastId(jarName: String): Long = {
     tempIds.get(jarName).fold(-1L)(_.last)
+  }
+
+  def lastIdOpt(jarName: String): Option[Long] = {
+    tempIds.get(jarName).map(_.last)
   }
 
   def exists(jarName: String, tempId: Long = -1L): Boolean = {
@@ -167,28 +209,41 @@ object PluginManager {
   // pluginName -> PluginDef(className, ..dependencies)
   def scanJarForPlugins(file: File): PluginDefMap = {
     val jar = new JarFile(file)
-    val classList = jar.entries().asScala.toVector
-      .filter(_.getName.endsWith(".class"))
-      .map(_.getName.replace("/", ".")
-      .stripSuffix(".class"))
-    val classLoader = new URLClassLoader(Array(file.toURI.toURL))
+    val entries = jar.entries().asScala.toVector
+    val pdefFiles = entries.filter(_.getName.toLowerCase.endsWith(".pdef"))
 
-    val pluginDefMap = for {
-      (clazz, className) <- classList.map(cn => (classLoader.loadClass(cn), cn))
-      if clazz.isAnnotationPresent(classOf[Plugin])
-    } yield {
-      val plugin = clazz.getAnnotation(classOf[Plugin])
-      plugin.name -> PluginDef(className, plugin.dependencies)
+    if(pdefFiles.nonEmpty) {
+      println("plugin definition files found")
+      pdefFiles.foldLeft(PluginDefMapUtil.empty()) { (pDefMap, entry) =>
+        val is = jar.getInputStream(entry)
+        val b = new Array[Byte](is.available)
+        is.read(b)
+        pDefMap ++ PluginDefParser(new String(b))
+      }
+      // TODO check plugins are valid
+    } else {
+      val classList = entries
+        .filter(_.getName.endsWith(".class"))
+        .map(_.getName.replace("/", ".")
+        .stripSuffix(".class"))
+      val classLoader = new URLClassLoader(Array(file.toURI.toURL))
+
+      val pluginDefMap = for {
+        (clazz, className) <- classList.map(cn => (classLoader.loadClass(cn), cn))
+        if clazz.isAnnotationPresent(classOf[Plugin])
+      } yield {
+        val plugin = clazz.getAnnotation(classOf[Plugin])
+        plugin.name -> PluginDef(Option(className), plugin.dependencies)
+      }
+
+      classLoader.close()
+
+      pluginDefMap.toMap
     }
-
-    classLoader.close()
-
-    pluginDefMap.toMap
   }
 
   def load(jarName: String): Boolean = {
-    if (needRefresh) refresh()
-    if (needUpdate) update()
+    check()
     createClassLoader(jarName).nonEmpty
   }
 
@@ -197,10 +252,14 @@ object PluginManager {
 
     buildDependencyTree(jarName) map {
       dependencies =>
-        val classLoader = new PluginClassLoader(jarName, tempId)
+        val classLoader = PluginClassLoader(jarName, tempId)
         classLoader ++= dependencies
 
         classLoaders += (jarName, newDepTreeId(jarName, tempId)) -> classLoader
+        println(1, uses, dependencies)
+        uses += (jarName, tempId) -> uses.get(jarName, tempId).fold(1)(_+1)
+        dependencies.foreach(id => uses(id) = uses.get(id).fold(1)(_+1))
+        println(2, uses)
         classLoader
     }
   }
@@ -233,16 +292,8 @@ object PluginManager {
   }
 
   def dependencies(jarName: String, pluginName: String = null, tempId: Long = -1): Option[Set[String]] = {
-    val id = {
-      if (exists(jarName, tempId)) {
-        if (tempId < 0) lastId(jarName) else tempId
-      } else {
-        return None
-      }
-    }
-
-    pluginDefMaps.get(jarName, id).map {
-      pluginDefMap =>
+    tempIdOpt(jarName, tempId).map { id =>
+      pluginDefMaps.get(jarName, id).map { pluginDefMap =>
         if (pluginName == null) {
           pluginDefMap.values.foldLeft(Set.empty[String]) {
             (set, pluginDef) => set ++ pluginDef.dependencies
@@ -250,33 +301,46 @@ object PluginManager {
         } else {
           pluginDefMap.get(pluginName).fold[Set[String]](return None)(_.dependencies.toSet)
         }
+      }
+    }.flatten
+  }
+
+  private def tempIdOpt(jarName: String, tempId: Long = -1L): Option[Long] = {
+    if (exists(jarName, tempId)) {
+      if (tempId < 0) lastIdOpt(jarName) else Option(tempId)
+    } else {
+      None
     }
+  }
+
+  def getPlugin(jarName: String, pluginName: String, tempId: Long = -1): Option[PluginWrapper] = {
+    check()
+
+    tempIdOpt(jarName, tempId).map { id =>
+      getClass(jarName, pluginName, id) map { clazz =>
+        new PluginWrapper(clazz, (jarName, depTreeIds(jarName, id).last), system)
+      }
+    }.flatten
   }
 
   def getClass(jarName: String, pluginName: String, tempId: Long = -1): Option[Class[_]] = {
-    val id = {
-      if (exists(jarName, tempId)) {
-        if (tempId < 0) lastId(jarName) else tempId
-      } else {
-        return None
+    tempIdOpt(jarName, tempId).map { id =>
+      depTreeIds.get(jarName, id).map {
+        depTreeIds =>
+          val classLoader = classLoaders(jarName, depTreeIds.last)
+          val className = pluginDefMaps.get(jarName, id).fold[String](return None) {
+            pluginDefMap =>
+              pluginDefMap.get(pluginName).fold[String](return None)(_.className.getOrElse(return None))
+          }
+          classLoader.loadClass(className)
       }
-    }
-
-    depTreeIds.get(jarName, id).map {
-      depTreeIds =>
-        val classLoader = classLoaders(jarName, depTreeIds.last)
-        val className = pluginDefMaps.get(jarName, id).fold[String](return None) {
-          pluginDefMap =>
-            pluginDefMap.get(pluginName).fold[String](return None)(_.className)
-        }
-        classLoader.loadClass(className)
-    }
+    }.flatten
   }
 
 
-  // ####################################################################################################################
-  // #                                                listing methods                                                   #
-  // ####################################################################################################################
+// ####################################################################################################################
+// #                                                listing methods                                                   #
+// ####################################################################################################################
 
   def pluginFiles(showTemp: Boolean = false): Vector[File] = {
     var plugins = pluginDirectory
@@ -308,9 +372,9 @@ object PluginManager {
   }
 
 
-  // ####################################################################################################################
-  // #                                              temp files management                                               #
-  // ####################################################################################################################
+// ####################################################################################################################
+// #                                              temp files management                                               #
+// ####################################################################################################################
 
   def createTemp(id: Id): File = {
     createTemp(id._1, id._2)

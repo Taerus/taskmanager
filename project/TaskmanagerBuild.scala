@@ -1,5 +1,7 @@
 import sbt._
 import sbt.Keys._
+import sbtunidoc.Plugin._
+import UnidocKeys._
 
 
 object TaskmanagerBuild extends Build {
@@ -9,7 +11,7 @@ object TaskmanagerBuild extends Build {
   lazy val root: Project = Project(
     libName,
     file("."),
-    settings = buildSettings ++ Seq(
+    settings = buildSettings ++ unidocSettings ++ Seq(
       run <<= run in Compile in samples,
       publish:= (),
       publishLocal := ()

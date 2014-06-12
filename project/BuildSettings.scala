@@ -27,7 +27,8 @@ object BuildSettings {
       Resolver.sonatypeRepo("releases"),
       Resolver.typesafeRepo("releases"),
       "SpringSource Milestone Repository" at "https://repo.springsource.org/libs-milestone"
-    )
+    ),
+    publishTo := Some(Resolver.file("file",  new File("../taskmanager-pages/repository")))
   )
   
 }
