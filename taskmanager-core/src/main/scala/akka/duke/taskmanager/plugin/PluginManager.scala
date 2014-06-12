@@ -10,11 +10,13 @@ import java.util.jar.JarFile
 import scala.collection.immutable.SortedSet
 import scala.concurrent.duration._
 import DirWatcher._
-import akka.actor.{PoisonPill, Cancellable, ActorSystem}
+import akka.actor.{Cancellable, ActorSystem}
 import scala.concurrent.ExecutionContext.Implicits.global
+import org.slf4j.LoggerFactory
+import com.typesafe.scalalogging.slf4j.LazyLogging
 
 
-object PluginManager {
+object PluginManager extends LazyLogging {
 
   object RefreshPolicy extends Enumeration {
     type RefreshPolicy = Value
@@ -51,7 +53,7 @@ object PluginManager {
   private var _refreshPolicy = RefreshPolicy.Dynamic
   private var _updatePolicy = UpdatePolicy.OnUse
   private var _timeout: FiniteDuration = 1.minute
-  private var dirWatcher = new DirWatcher("plugins/", extensionFilter("jar"), not(prefixFilter("~")))
+  private val dirWatcher = new DirWatcher("plugins/", extensionFilter("jar"), not(prefixFilter("~")))
   private var lastRefresh = 0L
   private var _pluginDirVersion = -1L -> Vector.empty[Id]
   private val added = mutable.Set.empty[Id]
@@ -89,20 +91,19 @@ object PluginManager {
     import RefreshPolicy._
     _timeout = value
     if (_refreshPolicy == TimeoutSchedule) {
-      stopRefreshScheduler()
       startRefreshScheduler()
     }
   }
 
   def startRefreshScheduler() {
-    if(refreshSceduler != null && !refreshSceduler.isCancelled) {
-      refreshSceduler.cancel()
-    }
+    stopRefreshScheduler()
     refreshSceduler = system.scheduler.schedule(timeout, timeout)(refresh())
   }
 
   def stopRefreshScheduler() {
-    // TODO
+    if(refreshSceduler != null && !refreshSceduler.isCancelled) {
+      refreshSceduler.cancel()
+    }
   }
 
   def pluginDirVersion: Long = {
@@ -117,7 +118,7 @@ object PluginManager {
   }
 
   def refresh(): Long = {
-    println("Refreshing")
+    logger.debug("Refreshing")
     lastRefresh = System.currentTimeMillis
     var (version, lastIds) = _pluginDirVersion
     val ids = pluginIds()
@@ -130,16 +131,16 @@ object PluginManager {
       added --= removed
       version = System.currentTimeMillis
       _pluginDirVersion = (version, ids)
-      println(s"  - ${newIds.size} (${added.size}) added")
-      println(s"  - ${remIds.size} (${removed.size}) removed")
+      logger.debug(s"  - ${newIds.size} (${added.size}) added")
+      logger.debug(s"  - ${remIds.size} (${removed.size}) removed")
 
       if(_updatePolicy == UpdatePolicy.OnRefresh) {
         update()
       } else {
-        println("update to apply")
+        logger.debug("update to apply")
       }
     }
-    println("no changes")
+    logger.debug("no changes")
 
     version
   }
@@ -148,7 +149,14 @@ object PluginManager {
     for ((jarName, tempId) <- added) {
       val newIds = tempIds.get(jarName).fold(SortedSet(tempId))(_ + tempId)
       tempIds(jarName) = newIds
-      pluginDefMaps += (jarName, tempId) -> scanJarForPlugins(jarName, tempId)
+      val pluginDefMap = {
+        loadPluginDefMap(jarName, tempId).getOrElse {
+          val pdm = scanJarForPlugins(jarName, tempId)
+          savePluginDefMap(jarName, tempId, pdm)
+          pdm
+        }
+      }
+      pluginDefMaps += (jarName, tempId) -> pluginDefMap
     }
     added.clear()
 
@@ -213,7 +221,7 @@ object PluginManager {
     val pdefFiles = entries.filter(_.getName.toLowerCase.endsWith(".pdef"))
 
     if(pdefFiles.nonEmpty) {
-      println("plugin definition files found")
+      logger.debug("plugin definition files found")
       pdefFiles.foldLeft(PluginDefMapUtil.empty()) { (pDefMap, entry) =>
         val is = jar.getInputStream(entry)
         val b = new Array[Byte](is.available)
@@ -256,10 +264,8 @@ object PluginManager {
         classLoader ++= dependencies
 
         classLoaders += (jarName, newDepTreeId(jarName, tempId)) -> classLoader
-        println(1, uses, dependencies)
         uses += (jarName, tempId) -> uses.get(jarName, tempId).fold(1)(_+1)
         dependencies.foreach(id => uses(id) = uses.get(id).fold(1)(_+1))
-        println(2, uses)
         classLoader
     }
   }
@@ -400,10 +406,10 @@ object PluginManager {
       println(s"$jarName is loaded, please unload it before deleting its temp file.")
       false
     } else */ if (file.delete()) {
-      println(s"${file.getName} deleted")
+      logger.info(s"${file.getName} deleted")
       true
     } else {
-      println(s"failed to delete ${file.getName}")
+      logger.error(s"failed to delete ${file.getName}")
       false
     }
   }

@@ -1,15 +1,24 @@
 package akka.duke.taskmanager.plugin
 
+import java.io.{FileNotFoundException, File}
+import scala.io.Source
+import org.slf4j.LoggerFactory
+import com.typesafe.scalalogging.slf4j.LazyLogging
 
-object PluginDefParser {
+
+object PluginDefParser extends LazyLogging {
 
   private val GLOBAL = "__GLOBAL__"
   
   private val pluginNamePatern = """(\S+)(?:\s.*)?""".r
   private val pluginConfigPatern = """^(.)>\s*(\S.*)$""".r
 
-  
+
   def apply(str: String): PluginDefMap = {
+    parseString(str)
+  }
+  
+  def parseString(str: String): PluginDefMap = {
 
     val lines = str.split('\n').map(_.trim).filterNot(_.isEmpty)
 
@@ -31,7 +40,7 @@ object PluginDefParser {
         globalDep = d
       } else if(!drop) {
         if(c.isEmpty && r.nonEmpty) {
-          println(s"error: run method defined without associated class : $r in $p")
+          logger.error(s"run method defined without associated class : $r in $p")
         } else {
           pDefs += p -> PluginDef(Option(c), (d ++ globalDep).toArray, Option(r))
         }
@@ -43,6 +52,8 @@ object PluginDefParser {
     reset()
 
     lines.foreach {
+      case comments if comments.startsWith("#") => ()
+
       case pluginConfigPatern(t, ps) =>
         if(!drop) {
           val params = ps.split("\\s+")
@@ -50,9 +61,9 @@ object PluginDefParser {
             case "c" | "class" =>
               val cn = params.head
               if (p == GLOBAL) {
-                println(s"warning: class tag defined outside a plugin definition is ignored : $cn")
+                logger.warn(s"class tag defined outside a plugin definition is ignored : $cn")
               } else if (c.nonEmpty) {
-                println(s"error: class already defined for $p : $cn")
+                logger.error(s"class already defined for $p : $cn")
                 drop = true
               } else {
                 c = cn
@@ -61,9 +72,9 @@ object PluginDefParser {
             case "r" | "run" =>
               val rn = params.head
               if (p == GLOBAL) {
-                println(s"warning: run method tag defined outside a plugin definition is ignored : $rn")
+                logger.warn(s"run method tag defined outside a plugin definition is ignored : $rn")
               } else if (r.nonEmpty) {
-                println(s"error: run method already defined for $p : $rn")
+                logger.error(s"run method already defined for $p : $rn")
                 drop = true
               }
               r = rn
@@ -85,6 +96,29 @@ object PluginDefParser {
     add()
 
     pDefs
+  }
+
+  def parseFile(path: String): Option[PluginDefMap] = {
+    parseFile(new File(path))
+  }
+
+  def parseFile(file: File): Option[PluginDefMap] = {
+    if(file.exists && file.isFile) {
+      try {
+        val src = Source.fromFile(file)
+        val str = src.getLines().mkString("\n")
+        src.close()
+        Option(parseString(str))
+      } catch {
+        case e: FileNotFoundException =>
+          logger.error(e.getMessage)
+          None
+        case e: Exception =>
+          None
+      }
+    } else {
+      None
+    }
   }
 
 }
