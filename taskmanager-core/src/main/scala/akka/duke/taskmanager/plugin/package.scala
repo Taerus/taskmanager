@@ -1,72 +1,42 @@
 package akka.duke.taskmanager
 
-import java.io._
-import scala.io.Source
+import org.json4s.JsonDSL._
+import org.json4s.JsonAST.JValue
+import org.json4s.DefaultFormats
+import java.lang.reflect.Method
 
 
 package object plugin {
 
-  // (jarName, id)
-  type Id = (String, Long)
+  implicit val formats = DefaultFormats
 
-  // pluginName -> pluginDef
-  type PluginDefMap = Map[String, PluginDef]
-  object PluginDefMapUtil {
-    def empty() = Map.empty[String, PluginDef]
+  def pluginDef2JSON(pluginDef: PluginDef): JValue = {
+    import pluginDef._
+
+    ("name" -> name) ~
+      ("version" -> version) ~
+      ("dependencies" -> dependencies.map { d =>
+        ("name" -> d.name) ~ ("version" -> d.version)
+      }) ~
+      ("entries" -> entries.map { case (entryName, e) =>
+        entryName -> ( ("class" -> e.`class`) ~ ("run" -> e.run) )
+      })
   }
 
-  case class PluginDef(className: Option[String], dependencies: Array[String], runMethodName: Option[String] = None)
+  case class PluginDef(name: Option[String],
+                       version: Option[String],
+                       dependencies: List[PluginDependency],
+                       entries: Map[String, PluginEntry])
 
-
-  val cacheDir = new File("plugins/.cache")
-
-  def clearCache() {
-    def rmDir(dir: File) {
-      dir.listFiles().foreach { f =>
-        if(f.isDirectory) {
-          rmDir(f)
-        } else {
-          f.delete()
-        }
-      }
-    }
-    if(cacheDir.exists() && cacheDir.isDirectory) {
-      rmDir(cacheDir)
-    }
+  case class PluginEntry(`class`: String, run: Option[String]) {
+    run.foreach( _ => if(`class`.isEmpty) throw new RuntimeException("run method defined without class") )
   }
 
-  def savePluginDefMap(name: String, version: Long, pluginDefMap: PluginDefMap, path: String = "plugins/.cache/") {
-    if(!cacheDir.exists()) {
-      cacheDir.mkdirs()
-    }
-    val f = new File(s"$path/$name")
-    if(!f.exists()) f.createNewFile()
-    val fw = new FileWriter(f)
-    fw.write(s"#${version.toHexString}\n")
-    pluginDefMap.foreach { case (pn, PluginDef(cn, ds, rn)) =>
-      fw.write(pn + "\n")
-      cn.foreach(v => fw.write(s" c> $v\n"))
-      rn.foreach(v => fw.write(s" r> $v\n"))
-      ds.foreach(v => fw.write(s" d> $v\n"))
-    }
-    fw.flush()
-    fw.close()
-  }
+  case class PluginDependency(name: String, version: Option[String])
 
-  def loadPluginDefMap(name: String, version: Long, path: String = "plugins/.cache/"): Option[PluginDefMap] = {
-    try {
-      val br = new BufferedReader(new FileReader(s"$path/$name"))
-      val ret = if (br.readLine() == s"#${version.toHexString}") {
-        PluginDefParser.parseFile(s"$path/$name")
-      } else {
-        None
-      }
-      br.close()
-      ret
-    } catch {
-      case e: Exception => None
-    }
-  }
+
+  // (jarName, jarDate)
+  case class JarId(jarName: String, jarDate: Long)
 
   def path(jarName: String, tempId: Long = -1L): String = {
     if(tempId < 0) {

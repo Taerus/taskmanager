@@ -6,9 +6,10 @@ import concurrent.duration._
 import concurrent.ExecutionContext.Implicits.global
 import scala.Some
 import akka.actor.{ActorRef, ActorSystem}
+import akka.duke.taskmanager.plugin.annotations.Run
 
 
-class PluginWrapper(clazz: Class[_], id: Id, system: ActorSystem) {
+class PluginWrapper(clazz: Class[_], id: JarId, system: ActorSystem) {
 
   private val runMethode: Option[Method] = clazz.getDeclaredMethods.find(_.isAnnotationPresent(classOf[Run]))
   private val parallelRun: Boolean = runMethode.exists(_.getAnnotation(classOf[Run]).parallel)
@@ -62,7 +63,7 @@ class PluginWrapper(clazz: Class[_], id: Id, system: ActorSystem) {
 
   def newTaskOpt: Option[Task] = {
     if(isTask) {
-      Option(clazz.newInstance().asInstanceOf[Task])
+      Some(clazz.newInstance().asInstanceOf[Task])
     } else {
       None
     }

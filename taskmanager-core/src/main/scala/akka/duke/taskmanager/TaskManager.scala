@@ -1,11 +1,15 @@
 package akka.duke.taskmanager
 
-import akka.actor.{PoisonPill, ActorLogging, ActorRef}
+import akka.actor._
 import scala.collection.mutable
 import akka.duke.taskmanager.event.Listener
 import akka.duke.taskmanager.Configurable.{ConfigurableCommand, AddConfig, SetConfig}
 import Message._
 import Task._
+import akka.duke.taskmanager.Message.BadRequest
+import scala.Some
+import akka.duke.taskmanager.Configurable.AddConfig
+import akka.duke.taskmanager.Configurable.SetConfig
 
 trait TaskManager extends ComposableActor with Configurable with Listener with ActorLogging {
   import TaskManager._
