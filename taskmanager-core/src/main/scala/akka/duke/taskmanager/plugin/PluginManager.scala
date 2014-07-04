@@ -17,6 +17,7 @@ import com.typesafe.scalalogging.slf4j.LazyLogging
 import com.typesafe.config.{ConfigRenderOptions, ConfigFactory}
 import akka.duke.taskmanager.util.DirWatcher
 import java.nio.file.Files
+import java.net.URLClassLoader
 
 
 object PluginManager extends LazyLogging {
@@ -121,7 +122,7 @@ object PluginManager extends LazyLogging {
   }
 
   def refresh(): Long = {
-    logger.debug("Refreshing")
+    logger.debug("refreshing...")
     lastRefresh = System.currentTimeMillis
     var (version, lastIds) = _pluginDirVersion
     val ids = pluginIds()
@@ -140,15 +141,15 @@ object PluginManager extends LazyLogging {
       if(_updatePolicy == UpdatePolicy.OnRefresh) {
         update()
       } else {
-        logger.debug("update to apply")
+        logger.debug("need update")
       }
     }
-    logger.debug("no changes")
 
     version
   }
 
   def update() {
+    logger.debug("updating...")
     for (JarId(jarName, jarDate) <- added) {
       val newIds = jarIds.get(jarName).fold(SortedSet(jarDate))(_ + jarDate)
       jarIds(jarName) = newIds
@@ -223,39 +224,80 @@ object PluginManager extends LazyLogging {
     pluginDir
   }
 
-  def scanJarForPlugins(jarName: String, jarDate: Long): Option[PluginDef] = {
-    scanJarForPlugins(new File(path(jarName, jarDate)))
-  }
 
   // pluginName -> PluginDef(className, ..dependencies)
-  def scanJarForPlugins(file: File): Option[PluginDef] = {
+  private def scanJarForPlugins(jarName: String, jarDate: Long): Option[PluginDef] = {
+    logger.debug(s"scanning $jarName for plugin definition...")
+    val file = new File(path(jarName, jarDate))
     val jar = new JarFile(file)
     val entries = jar.entries().asScala.toVector
-    val pluginDefOpt = entries.collectFirst{
+    val pluginDefFileOpt = entries.collectFirst{
       case entry if entry.getName == "META-INF/plugin.pdef" => entry
     }
 
-    val result = pluginDefOpt.map { entry =>
-      logger.debug("plugin definition found")
+    val filePluginDef = pluginDefFileOpt.map { entry =>
+      logger.debug("plugin definition file found")
 
       val is = jar.getInputStream(entry)
       val b = new Array[Byte](is.available)
       is.read(b)
 
-      val json = parse {
+      parse {
         ConfigFactory
           .parseString(new String(b)).root
           .render(ConfigRenderOptions.concise)
       }
+      .extractOpt[PluginDef]
+    }.flatten
 
-      println(pretty(render(json)))
+    val patern = """^\s*(.*\S)\s*(?::v:\s*(\S+)\s*)?$""".r
+    val classLoader = new URLClassLoader(Array(file.toURI.toURL))
+    val annotPluginDef = entries
+      .filter { _.getName.endsWith(".class") }
+      .map { jen =>
+        val className = jen
+          .getName.replace("/", ".")
+          .stripSuffix(".class")
 
-      json.extract[PluginDef]
-    }
+        classLoader.loadClass(className)
+      }
+      .filter { _.isAnnotationPresent(classOf[annotations.Plugin]) }
+      .map { clazz =>
+        val plugin = clazz.getAnnotation(classOf[annotations.Plugin])
+        println(plugin.name)
+        val dependencies = plugin.dependencies.map {
+          case patern(name, version) => PluginDependency(name, Option(version))
+        }.toList
+        val runOpt = clazz.getDeclaredMethods.collectFirst {
+          case method if method.isAnnotationPresent(classOf[annotations.Run]) =>
+            method.getName
+        }
+        val entries = Map(plugin.name -> PluginEntry(clazz.getCanonicalName, runOpt))
+
+        PluginDef(None, None, dependencies, entries)
+      }
+      .reduceOption {
+        (lhs, rhs) => lhs merge rhs
+      }
 
     jar.close()
 
-    result
+    val pluginDef = {
+      if(filePluginDef.isDefined && annotPluginDef.isDefined) {
+        Option(annotPluginDef.get merge filePluginDef.get)
+      } else {
+        filePluginDef orElse annotPluginDef
+      }
+    }
+
+    logger.debug {
+      pluginDef match {
+        case Some(_)  => "  definition loaded"
+        case None     => "  no definition found"
+      }
+    }
+
+    pluginDef
   }
 
   def load(jarName: String): Boolean = {
