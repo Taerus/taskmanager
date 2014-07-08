@@ -18,6 +18,8 @@ import com.typesafe.config.{ConfigRenderOptions, ConfigFactory}
 import akka.duke.taskmanager.util.DirWatcher
 import java.nio.file.Files
 import java.net.URLClassLoader
+import akka.duke.taskmanager.Task
+import Version.noVersion
 
 
 object PluginManager extends LazyLogging {
@@ -35,7 +37,10 @@ object PluginManager extends LazyLogging {
   import UpdatePolicy.UpdatePolicy
 
   // jarName -> ..jarDates
-  private val jarIds = mutable.HashMap.empty[String, SortedSet[Long]]
+  private val jarDates = mutable.HashMap.empty[String, SortedSet[Long]]
+
+  // (pName, pVersion) -> ..JarIds
+  private val pluginJarIds = mutable.HashMap.empty[PluginId, SortedSet[JarId]]
 
   // ( jarName, tempId ) -> [pluginName -> PluginDef(className, ..dependencies)]
   private val pluginDefMap = mutable.HashMap.empty[JarId, PluginDef]
@@ -150,9 +155,8 @@ object PluginManager extends LazyLogging {
 
   def update() {
     logger.debug("updating...")
-    for (JarId(jarName, jarDate) <- added) {
-      val newIds = jarIds.get(jarName).fold(SortedSet(jarDate))(_ + jarDate)
-      jarIds(jarName) = newIds
+    for (id @ JarId(jarName, jarDate) <- added) {
+      jarDates(jarName) = jarDates.get(jarName).fold(SortedSet(jarDate))(_ + jarDate)
       Cache.get(jarName, jarDate).orElse {
         val pluginDefOpt = scanJarForPlugins(jarName, jarDate)
         pluginDefOpt.fold(
@@ -162,18 +166,20 @@ object PluginManager extends LazyLogging {
         }
         pluginDefOpt
       }.foreach { pluginDef =>
-        pluginDefMap += JarId(jarName, jarDate) -> pluginDef
+        val key = PluginId(pluginDef.name.getOrElse(jarName), pluginDef.version)
+        pluginJarIds += key -> pluginJarIds.get(key).fold(SortedSet(id)) {_ + id}
+        pluginDefMap += id -> pluginDef
       }
     }
     added.clear()
 
     for (JarId(jarName, id) <- removed) {
-      jarIds.get(jarName).foreach { ids =>
+      jarDates.get(jarName).foreach { ids =>
         val newIds = ids - id
         if (newIds.isEmpty) {
-          jarIds -= jarName
+          jarDates -= jarName
         } else {
-          jarIds(jarName) = newIds
+          jarDates(jarName) = newIds
         }
       }
     }
@@ -190,7 +196,7 @@ object PluginManager extends LazyLogging {
   }
 
   def isLast(jarName: String, jarDate: Long): Boolean = {
-    jarIds.get(jarName).fold(false)(_.last == jarDate)
+    jarDates.get(jarName).fold(false)(_.last == jarDate)
   }
   
   def lastId(jarName: String) = JarId(jarName, lastDate(jarName))
@@ -198,11 +204,11 @@ object PluginManager extends LazyLogging {
   def lastIdOpt(jarName: String) = lastDateOpt(jarName).map(JarId(jarName, _))
 
   def lastDate(jarName: String): Long = {
-    jarIds.get(jarName).fold(-1L)(_.last)
+    jarDates.get(jarName).fold(-1L)(_.last)
   }
 
   def lastDateOpt(jarName: String): Option[Long] = {
-    jarIds.get(jarName).map(_.last)
+    jarDates.get(jarName).map(_.last)
   }
 
   def exists(id: JarId): Boolean = {
@@ -210,7 +216,7 @@ object PluginManager extends LazyLogging {
   }
 
   def exists(jarName: String, jarDate: Long = -1L): Boolean = {
-    jarIds.get(jarName).fold(false) {
+    jarDates.get(jarName).fold(false) {
       ids => if (jarDate < 0) ids.nonEmpty else ids.contains(jarDate)
     }
   }
@@ -250,7 +256,7 @@ object PluginManager extends LazyLogging {
       .extractOpt[PluginDef]
     }.flatten
 
-    val patern = """^\s*(.*\S)\s*(?::v:\s*(\S+)\s*)?$""".r
+    val patern = """^\s*(.*\S)\s*(?::v?:\s*(\S+)\s*)?$""".r
     val classLoader = new URLClassLoader(Array(file.toURI.toURL))
     val annotPluginDef = entries
       .filter { _.getName.endsWith(".class") }
@@ -264,7 +270,6 @@ object PluginManager extends LazyLogging {
       .filter { _.isAnnotationPresent(classOf[annotations.Plugin]) }
       .map { clazz =>
         val plugin = clazz.getAnnotation(classOf[annotations.Plugin])
-        println(plugin.name)
         val dependencies = plugin.dependencies.map {
           case patern(name, version) => PluginDependency(name, Option(version))
         }.toList
@@ -272,9 +277,10 @@ object PluginManager extends LazyLogging {
           case method if method.isAnnotationPresent(classOf[annotations.Run]) =>
             method.getName
         }
-        val entries = Map(plugin.name -> PluginEntry(clazz.getCanonicalName, runOpt))
+        val isTask = clazz.isAssignableFrom(classOf[Task])
+        val entries = Map(plugin.name -> PluginEntry(clazz.getCanonicalName, runOpt, isTask))
 
-        PluginDef(None, None, dependencies, entries)
+        PluginDef(None, noVersion, dependencies, entries)
       }
       .reduceOption {
         (lhs, rhs) => lhs merge rhs
@@ -373,27 +379,60 @@ object PluginManager extends LazyLogging {
     }
   }
 
-  def getPlugin(jarName: String, pluginName: String, jarDate: Long = -1): Option[Plugin] = {
+  def getPlugin(name: String, version: Version = noVersion, jarDate: Long = -1): Option[Plugin] = {
+    getPlugin(PluginId(name, version))
+  }
+
+  def getPlugin(pluginId: PluginId): Option[Plugin] = {
+    getPlugin(pluginId, -1)
+  }
+
+  def getPlugin(pluginId: PluginId, jarDate: Long): Option[Plugin] = {
     check()
 
-    jarDateOpt(jarName, jarDate).map { date =>
-      getClass(jarName, pluginName, date) map { clazz =>
-        Plugin(clazz, Some("pluginMain"))
-//        new PluginWrapper(clazz, (jarName, depTreeIds(jarName, id).last), system)
-      }
+    pluginJarIds.get(pluginId).map { _.last }.map { id =>
+      pluginDefMap.get(id).map { pluginDef =>
+        getClassLoader(id).map { classLoader =>
+          new Plugin(classLoader, pluginDef)
+        }
+      }.flatten
+//      getPluginEntry(id, "main").map { entry =>
+//        getClass(id, entry).map { Plugin(_, entry) }
+//      }.flatten
     }.flatten
   }
 
   def getClass(jarName: String, entryName: String, jarDate: Long = -1): Option[Class[_]] = {
     jarIdOpt(jarName, jarDate).map { id =>
-      depTreeIds.get(id).map { depTreeIds =>
-        classLoaders.get(JarId(jarName, depTreeIds.last)).map { classLoader =>
-          val className = pluginDefMap.get(id).fold[String](return None) {
-            _.entries.get(entryName).fold[String](return None)(_.`class`)
-          }
-          classLoader.loadClass(className)
-        }
+      getPluginEntry(id, entryName).map {
+        getClass(id, _)
       }.flatten
+    }.flatten
+  }
+
+  def getClass(id: JarId, pluginEntry: PluginEntry): Option[Class[_]] = {
+    depTreeIds.get(id).map { depTreeIds =>
+      classLoaders.get(JarId(id.jarName, depTreeIds.last)).map {
+        _.loadClass(pluginEntry.`class`)
+      }
+    }.flatten
+  }
+
+  def getClassLoader(id: JarId): Option[ClassLoader] = {
+    depTreeIds.get(id).map { depTreeIds =>
+      classLoaders.get(JarId(id.jarName, depTreeIds.last))
+    }.flatten
+  }
+
+  def getPluginEntry(jarName: String, entryName: String, jarDate: Long = -1): Option[PluginEntry] = {
+    jarIdOpt(jarName, jarDate).map { id =>
+      getPluginEntry(id, entryName)
+    }.flatten
+  }
+
+  def getPluginEntry(id: JarId, entryName: String): Option[PluginEntry] = {
+    pluginDefMap.get(id).map {
+      _.entries.get(entryName)
     }.flatten
   }
 
@@ -416,13 +455,23 @@ object PluginManager extends LazyLogging {
     pluginFiles(showTemp).map(f => JarId(f.getName.stripSuffix(".jar"), f.lastModified))
   }
 
-  def availablePlugins(showTemp: Boolean = false): Vector[String] = {
+  def pluginJarNames(showTemp: Boolean = false): Vector[String] = {
     pluginFiles(showTemp).map(_.getName.stripSuffix(".jar"))
   }
 
-  // jarName -> [tempId -> ..pluginNames]
+  def pluginNames: Vector[String] = {
+    pluginDefMap.collect {
+      case (_, PluginDef(Some(name), _, _, _)) => name
+      case (JarId(name, _), PluginDef(None, _, _, _)) => name
+    }.toVector
+  }
+
+  // jarName -> [jarDate -> ..pluginNames]
   def plugins: Map[String, Map[Long, Vector[String]]] = {
-    jarIds.map {
+    pluginJarIds.map {
+      case (PluginId(name, version), ids) =>
+    }
+    jarDates.map {
       case (jarName, jarDates) =>
         jarName -> jarDates.map { jarDate =>
             jarDate -> pluginDefMap.get(JarId(jarName, jarDate)).fold(Vector.empty[String])(_.entries.keys.toVector)
@@ -451,7 +500,7 @@ object PluginManager extends LazyLogging {
 
   def deleteTemp(jarName: String, tempId: Long = -1L): Boolean = {
     if (tempId < 0 && exists(jarName)) {
-      return jarIds(jarName) forall (deleteTemp(jarName, _))
+      return jarDates(jarName) forall (deleteTemp(jarName, _))
     }
 
     val file = new File(path(jarName, tempId))

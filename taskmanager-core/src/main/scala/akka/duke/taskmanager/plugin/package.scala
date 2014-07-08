@@ -13,7 +13,7 @@ package object plugin {
     import pluginDef._
 
     ("name" -> name) ~
-      ("version" -> version) ~
+      ("version" -> version.toOption) ~
       ("dependencies" -> dependencies.map { d =>
         ("name" -> d.name) ~ ("version" -> d.version)
       }) ~
@@ -23,13 +23,16 @@ package object plugin {
   }
 
   case class PluginDef(name: Option[String],
-                       version: Option[String],
+                       version: Version = Version.noVersion,
                        dependencies: List[PluginDependency],
                        entries: Map[String, PluginEntry] = Map.empty[String, PluginEntry]) {
 
     def merge(that: PluginDef): PluginDef = {
       val name = that.name orElse this.name
-      val version = that.version orElse this.version
+      val version = that.version match {
+        case Version.noVersion => this.version
+        case _ => that.version
+      }
       val dependencies = {
         this.dependencies.map(d => d.name -> d).toMap ++
         that.dependencies.map(d => d.name -> d).toMap
@@ -40,9 +43,8 @@ package object plugin {
     }
 
     def toJson = {
-      val a = 'lol
       ("name" -> name) ~
-        ("version" -> version) ~
+        ("version" -> version.toOption) ~
         ("dependencies" -> dependencies.map{_.toJson}) ~
         ("entries" -> entries.map { case (entryName, entry) =>
           entryName -> entry.toJson
@@ -50,11 +52,13 @@ package object plugin {
     }
   }
 
-  case class PluginEntry(`class`: String, run: Option[String]) {
+  case class PluginEntry(`class`: String, run: Option[String], isTask: Boolean = false) {
     run.foreach( _ => if(`class`.isEmpty) throw new RuntimeException("run method defined without class") )
 
+    val isRunnable = run.nonEmpty
+
     def toJson = {
-      ("class" -> `class`) ~ ("run" -> run)
+      ("class" -> `class`) ~ ("run" -> run) ~ ("isTask" -> isTask)
     }
   }
 
@@ -65,8 +69,52 @@ package object plugin {
   }
 
 
-  // (jarName, jarDate)
   case class JarId(jarName: String, jarDate: Long)
+
+  object JarId {
+    implicit val byDateFirst = Ordering[(Long, String)].on[JarId] {
+      id => (id.jarDate, id.jarName)
+    }
+  }
+  
+  
+  case class PluginId(name: String, version: Version)
+
+  object PluginId {
+    implicit val byVersionFirst = Ordering[(Long, Long, String)].on[PluginId] {
+      id => (id.version.major, id.version.minor, id.name)
+    }
+  }
+  
+
+  case class Version(major: Int, minor: Int = 0) {
+    override def toString = this match {
+      case Version(Integer.MIN_VALUE, _) => "_noVersion"
+      case Version(_, 0) =>  major.toString
+      case _ => s"$major.$minor"
+    }
+
+    def toOption: Option[String] = this match {
+      case Version.noVersion => None
+      case _ => Option(this.toString)
+    }
+  }
+
+  object Version {
+    val noVersion = Version(Integer.MIN_VALUE)
+
+    private val patern = """\D*(\d)(?:\.(\d+))?\D.*""".r
+
+    def apply(version: String): Version = {
+      version match {
+        case "_noVersion" => noVersion
+        case patern(major, null) => Version(major.toInt, 0)
+        case patern(major, minor)=> Version(major.toInt, minor.toInt)
+        case _ => throw new Exception(s"invalid plugin version : '$version'")
+      }
+    }
+  }
+
 
   def path(jarName: String, tempId: Long = -1L): String = {
     if(tempId < 0) {
