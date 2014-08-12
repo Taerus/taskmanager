@@ -1,7 +1,9 @@
 package akka.duke.taskmanager.plugin
 
-import java.util.jar.JarFile
 import scala.collection.mutable
+import java.net.URL
+import scala.tools.nsc.util.ScalaClassLoader.URLClassLoader
+import java.io.File
 
 
 class PluginClassLoader(val jarPath: String,
@@ -10,6 +12,12 @@ class PluginClassLoader(val jarPath: String,
 
   protected val _dependencies: mutable.HashMap[String, Long] = mutable.HashMap.empty[String, Long]
   protected var built = false
+  protected lazy val ucl = {
+    built = true
+    new URLClassLoader(
+      Seq(new File(jarPath).toURI.toURL) ++ dependencies.map( d => new File(path(d._1, d._2)).toURI.toURL),
+      parent)
+  }
 
 
   def dependencies = _dependencies.toMap
@@ -26,24 +34,12 @@ class PluginClassLoader(val jarPath: String,
     }
   }
 
-  override protected def findClass(name: String): Class[_] = {
-    if(!built) {
-      built = true
-    }
+  override def loadClass(name: String): Class[_] = {
+    ucl.loadClass(name)
+  }
 
-    try {
-      val b = loadClassData(name)
-      return defineClass(name, b, 0, b.length)
-    } catch { case e: Exception => () }
-
-    for( (jarName, tempId) <- _dependencies ) {
-      try {
-        val b = loadClassData(name, path(jarName, tempId))
-        return defineClass(name, b, 0, b.length)
-      } catch { case e: Exception => () }
-    }
-
-    throw new ClassNotFoundException(name)
+  override def findResource(name: String): URL = {
+    ucl.getResource(name)
   }
 
   override def equals(that: Any): Boolean = {
@@ -56,10 +52,6 @@ class PluginClassLoader(val jarPath: String,
     cl.jarPath == jarPath && cl._dependencies == _dependencies
   }
 
-  protected def loadClassData(name: String, path: String = jarPath): Array[Byte] = {
-    PluginClassLoader.loadClassData(name, path)
-  }
-
 }
 
 
@@ -67,17 +59,6 @@ object PluginClassLoader {
 
   def apply(jarName: String, tempId: Long = -1L, parent: ClassLoader = ClassLoader.getSystemClassLoader) = {
     new PluginClassLoader(path(jarName, tempId), parent)
-  }
-
-  def loadClassData(name: String, jarPath: String): Array[Byte] = {
-    val jar = new JarFile(jarPath)
-    val entry = jar.getEntry(name.replace(".", "/") + ".class")
-    val is = jar.getInputStream(entry)
-    val b = new Array[Byte](is.available())
-    is.read(b)
-    jar.close()
-
-    b
   }
 
 }

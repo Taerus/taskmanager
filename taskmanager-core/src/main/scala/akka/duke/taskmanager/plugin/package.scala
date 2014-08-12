@@ -2,7 +2,7 @@ package akka.duke.taskmanager
 
 import org.json4s.JsonDSL._
 import org.json4s.JsonAST.JValue
-import org.json4s.DefaultFormats
+import org.json4s.{FieldSerializer, DefaultFormats}
 
 
 package object plugin {
@@ -18,14 +18,21 @@ package object plugin {
         ("name" -> d.name) ~ ("version" -> d.version)
       }) ~
       ("entries" -> entries.map { case (entryName, e) =>
-        entryName -> ( ("class" -> e.`class`) ~ ("run" -> e.run) )
+        entryName -> ( ("class" -> e.`class`) ~ ("run" -> e.run) ~ ("isTask" -> e.isTask) )
       })
   }
 
   case class PluginDef(name: Option[String],
-                       version: Version = Version.noVersion,
+                       version: Version,
                        dependencies: List[PluginDependency],
-                       entries: Map[String, PluginEntry] = Map.empty[String, PluginEntry]) {
+                       entries: Map[String, PluginEntry]) {
+
+    def this(name: Option[String],
+             version: String = null,
+             dependencies: List[PluginDependency],
+             entries: Map[String, PluginEntry] = Map.empty[String, PluginEntry]) = {
+      this(name, Version(version), dependencies, entries)
+    }
 
     def merge(that: PluginDef): PluginDef = {
       val name = that.name orElse this.name
@@ -88,14 +95,16 @@ package object plugin {
   
 
   case class Version(major: Int, minor: Int = 0) {
+    import Version._
+
     override def toString = this match {
       case Version(Integer.MIN_VALUE, _) => "_noVersion"
-      case Version(_, 0) =>  major.toString
+      case Version(_, 0) =>  s"$major.0"
       case _ => s"$major.$minor"
     }
 
     def toOption: Option[String] = this match {
-      case Version.noVersion => None
+      case `noVersion` => None
       case _ => Option(this.toString)
     }
   }
@@ -107,7 +116,7 @@ package object plugin {
 
     def apply(version: String): Version = {
       version match {
-        case "_noVersion" => noVersion
+        case "_noVersion" | null => noVersion
         case patern(major, null) => Version(major.toInt, 0)
         case patern(major, minor)=> Version(major.toInt, minor.toInt)
         case _ => throw new Exception(s"invalid plugin version : '$version'")

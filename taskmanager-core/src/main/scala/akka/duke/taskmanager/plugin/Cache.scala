@@ -15,7 +15,7 @@ object Cache extends LazyLogging {
 
   private var cacheDir: File = null
 
-  private var pluginNames: mutable.HashMap[String, String] = null
+  private var pluginNames: mutable.HashMap[JarId, (String, String)] = null
   private var pluginNamesFile: File = null
 
 
@@ -42,7 +42,7 @@ object Cache extends LazyLogging {
 
       pluginNamesFile = new File(dir, "pluginNames")
       if(!pluginNamesFile.exists) {
-        pluginNames = mutable.HashMap.empty[String, String]
+        pluginNames = mutable.HashMap.empty[JarId, (String, String)]
       } else {
         loadPluginNames()
       }
@@ -103,10 +103,9 @@ object Cache extends LazyLogging {
     *
     * @param jarName the name of the plugin jar file
     * @param jarDate the last modification date of the plugin jar file
-    * @param version the plugin version
     * @return an option value containing the plugin definition, or None if not present in the cache
     */
-  def get(jarName: String, jarDate: Long, version: String = "_noVersion"): Option[PluginDef] = {
+  def get(jarName: String, jarDate: Long): Option[PluginDef] = {
     logger.debug(s"searching $jarName definition from the cache...")
 
     def failLog(cause: String) {
@@ -114,32 +113,23 @@ object Cache extends LazyLogging {
       logger.trace("  cause : {}", cause)
     }
 
-    val pluginName = getPluginName(jarName)
+    val (pluginName, version) = getPluginName(JarId(jarName, jarDate))
     if(!contains(pluginName, version)) {
       failLog("no definition file found")
       return None
     }
 
     val file = new File(directory, s"$pluginName/$version")
-    val (lastDate, json) = readFile(file) { lines =>
-//      if(lines.next().toLong != jarDate) {
-//        failLog("definition date doesn't match")
-//        return None
-//      }
+    val json = readFile(file) { lines => parse(lines.mkString) } \ jarDate.toString
 
-      (lines.next().toLong, parse(lines.mkString))
+    val pluginDef = json match {
+      case JNothing => None
+      case _ => json.extractOpt[PluginDef]
     }
 
-    val pluginDefMapOpt = json.extractOpt[Map[String, PluginDef]]
-    val pluginDef = pluginDefMapOpt.map{ _.get(jarDate.toString) }.flatten
-
-    if(pluginDefMapOpt.isDefined) {
-       pluginDef match {
-        case Some(_) => logger.debug("  definition loaded")
-        case None    => failLog("definition not found")
-      }
-    } else {
-      failLog("failed to parse the plugin definition")
+    pluginDef match {
+      case Some(_) => logger.debug("  definition loaded")
+      case None => failLog("definition not found")
     }
 
     pluginDef
@@ -188,26 +178,21 @@ object Cache extends LazyLogging {
     try {
       if(!dir.exists) dir.mkdir()
 
-      var date = jarDate
       var newJson = JObject(jarDate.toString -> json :: Nil)
       if(!file.exists()) {
         file.createNewFile()
       } else {
         val oldJson = readFile(file) { lines =>
-          date = math.max(date, lines.next().toLong)
           parse(lines.mkString)
         }.asInstanceOf[JObject]
         newJson = oldJson merge newJson
       }
 
-      val str = pretty(render(newJson))
-
       val fw = new FileWriter(file)
-      fw.write(date + "\n")
-      fw.write(str)
+      fw.write(pretty(render(newJson)))
       fw.close()
 
-      setPluginName(jarName, pluginName)
+      setPluginName(JarId(jarName, jarDate), pluginName, version)
 
       logger.debug("done")
     } catch {
@@ -225,13 +210,13 @@ object Cache extends LazyLogging {
     result
   }
 
-  private def getPluginName(jarName: String): String = {
-    pluginNames.getOrElse(jarName, jarName)
+  private def getPluginName(id: JarId): (String, String) = {
+    pluginNames.getOrElse(id, (id.jarName, "_noVersion"))
   }
 
-  private def setPluginName(jarName: String, pluginName: String) {
-    if(jarName != pluginName) {
-      pluginNames(jarName) = pluginName
+  private def setPluginName(id: JarId, pluginName: String, version: String) {
+    if( !(id.jarName == pluginName && version == "_noVersion") ) {
+      pluginNames(id) = (pluginName, version)
       savePluginNames()
     }
   }
@@ -239,7 +224,7 @@ object Cache extends LazyLogging {
   private def loadPluginNames() {
     val fis = new FileInputStream(pluginNamesFile)
     val ois = new ObjectInputStream(fis)
-    pluginNames = ois.readObject().asInstanceOf[mutable.HashMap[String, String]]
+    pluginNames = ois.readObject().asInstanceOf[mutable.HashMap[JarId, (String, String)]]
     ois.close()
     fis.close()
   }

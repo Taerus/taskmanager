@@ -1,4 +1,4 @@
-import akka.duke.taskmanager.plugin.{Cache, PluginManager}
+import akka.duke.taskmanager.plugin.{Plugin, JarId, Cache, PluginManager}
 import ch.qos.logback.classic.{Logger, Level}
 import com.typesafe.scalalogging
 import com.typesafe.scalalogging.slf4j.LazyLogging
@@ -9,55 +9,7 @@ object Test extends App with LazyLogging {
   LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME).asInstanceOf[Logger].setLevel(Level.TRACE)
 
   Cache.directory = "plugins/.cache"
-//  Cache.clear()
 
-//  val conf = ConfigFactory.parseString(
-//    """a {
-//      |  b : 4
-//      |  c = [1,2,3]
-//      |}
-//    """.stripMargin)
-//  println(pretty(render(parse(conf.root.render(ConfigRenderOptions.concise())))))
-//
-//
-//  val json = parse("""
-//    {
-//      "dependencies": ["plugin2"],
-//      "plugins": [{
-//         "class": "plugin.PluginMain",
-//         "run": "pluginMain"
-//      }]
-//    }
-//                   """)
-//
-//  println(pretty(render(json)))
-//
-//  PluginDefParser("""d> pluginZ
-//                      |c> cZ
-//                      |r> rZ
-//                      |
-//                      |plugin1
-//                      |  C> plugin.PluginMain
-//                      |  R> pluginMain par
-//                      |  D> plugin2
-//                      |
-//                      |drop1
-//                      |  r> run
-//                      |
-//                      |drop2
-//                      |  c> c1
-//                      |  c> c2
-//                      |
-//                      |plugin1-2
-//                      |  c> plugin.Lol
-//                      |  d> plugin2
-//                      |  d> plugin3
-//                      |
-//                      |plugin1-3
-//                      """.stripMargin)
-//  .foreach { case (pn, PluginDefO(c, d, r)) =>
-//    println(s"$pn(${c.getOrElse("n/a")} (${r.getOrElse("n/a")}) {${d.mkString(", ")}})")
-//  }
 
   implicit class DebugLogger(logger: scalalogging.slf4j.Logger) {
     def doInDebug(f: DebugLogger => Unit) {
@@ -79,15 +31,6 @@ object Test extends App with LazyLogging {
     }
   }
 
-//  logger.doInInfo { log =>
-//    println("println info")
-//    log("log info")
-//  }
-//
-//  logger.doInDebug { log =>
-//    println("println debug")
-//    log("log debug")
-//  }
 
   logger.doInDebug { log =>
     PluginManager.plugins.foreach {
@@ -116,11 +59,23 @@ object Test extends App with LazyLogging {
 //  f2.delete()
 //  println(dw.waitChanges())
 
+
+  println(PluginManager.pluginNames)
+
   PluginManager.load("plugin1")
-  PluginManager.getPlugin("plugin1", "main").foreach { plugin =>
-    plugin.init()
-    plugin.run("wru", "exit")
+  PluginManager.getPlugin("plugin 1").foreach { plugin =>
+    println(plugin.listEntries.mkString("entries {\n  ", "\n  ", "\n}"))
+    println(plugin.listTasks.mkString("tasks {\n  ", "\n  ", "\n}"))
+    println(plugin.listRunnables.mkString("runnables {\n  ", "\n  ", "\n}"))
+
+    val main = plugin.runnable("main")
+    println(main.instance.getClass.getClassLoader.getResource("plugin/PluginMain.class"))
+    main.run("wru", "exit")
+
+//    val main2 = plugin.newRunnableEntry("main")
+//    main2.run("wru", "exit")
   }
+
 
 //  PluginManager.getPlugin("decount")
 

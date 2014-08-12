@@ -7,7 +7,7 @@ trait TaskLoader {
 
   val defaultSource: String = null
 
-  /** Load a task and return its [[akka.actor.ActorRef]]
+  /** Load a task and return its akka.actor.ActorRef
     *
     * @param taskId The identifier of the task
     * @param taskName The name of the task in the actor system

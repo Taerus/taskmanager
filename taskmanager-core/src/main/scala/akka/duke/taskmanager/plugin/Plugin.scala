@@ -70,6 +70,8 @@ object Plugin {
   }
   
   class TaskEntry(clazz: Class[_]) extends Entry(clazz) {
+    def task = clazz
+
     def factory = ???
   }
   

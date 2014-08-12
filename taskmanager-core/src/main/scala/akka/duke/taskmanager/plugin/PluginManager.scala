@@ -466,6 +466,17 @@ object PluginManager extends LazyLogging {
     }.toVector
   }
 
+  def taskNames: Map[String, (String, Vector[String])] = {
+    pluginDefMap.collect {
+      case (JarId(jarName, _), PluginDef(Some(name), _, _, entries)) => (name, (jarName, entries))
+      case (JarId(jarName, _), PluginDef(None, _, _, entries)) => (jarName, (jarName, entries))
+    }.map { case (name, (jarName, entries)) =>
+      name -> (jarName, entries.filter { case (_, PluginEntry(_, _, isTask)) => isTask }.keys.toVector)
+    }.filter { case (_, (_, entries)) =>
+      entries.nonEmpty
+    }.toMap
+  }
+
   // jarName -> [jarDate -> ..pluginNames]
   def plugins: Map[String, Map[Long, Vector[String]]] = {
     pluginJarIds.map {

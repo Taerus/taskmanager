@@ -2,7 +2,7 @@ package akka.duke.taskmanager
 
 import akka.actor._
 import scala.collection.mutable
-import akka.duke.taskmanager.event.Listener
+import akka.duke.taskmanager.event.{Publisher, Listener}
 import akka.duke.taskmanager.Configurable.{ConfigurableCommand, AddConfig, SetConfig}
 import Message._
 import Task._
@@ -11,12 +11,13 @@ import scala.Some
 import akka.duke.taskmanager.Configurable.AddConfig
 import akka.duke.taskmanager.Configurable.SetConfig
 
-trait TaskManager extends ComposableActor with Configurable with Listener with ActorLogging {
+trait TaskManager extends ComposableActor with Configurable with Listener with Publisher with ActorLogging {
   import TaskManager._
 
   val taskLoader: TaskLoader
 
   val taskMap = new mutable.HashMap[String, ActorRef]
+  val taskIdMap = new mutable.HashMap[String, String]
 
   override def preStart() {
     super.preStart()
@@ -50,6 +51,8 @@ trait TaskManager extends ComposableActor with Configurable with Listener with A
         taskLoader.load(taskId, taskName, context) match {
           case Some(task) =>
             taskMap += taskName -> task
+            taskIdMap += taskName -> taskId
+            publish(TaskAdded(taskId, taskName))
             log.info(s"$taskName added to ${self.path.name}")
           case None =>
             sender ! msg
@@ -61,10 +64,23 @@ trait TaskManager extends ComposableActor with Configurable with Listener with A
         task ! Stop
         task ! PoisonPill
         taskMap -= taskName
+        taskIdMap -= taskName
+        publish(TaskRemoved(taskName))
       }
 
     case ListTasks =>
       sender ! TaskList(taskMap.keys.toList)
+
+    case ListTasksById =>
+      sender ! TaskListById {
+        taskIdMap.foldLeft(mutable.Map.empty[String, List[String]].withDefaultValue(Nil)) { case (m, (tn, tid)) =>
+          m(tid) ::= tn
+          m
+        }.toMap
+      }
+
+    case ListTasksOf(taskIds) =>
+      sender ! TaskListById(taskIds.map { tid => tid -> taskIdMap.filter{_._2 == tid}.keys.toList }.toMap)
 
     case ListAvailableTasks =>
       sender ! AvailableTaskList(taskLoader.list())
@@ -101,14 +117,21 @@ object TaskManager {
 
 
   sealed trait TaskManagerRequest extends TaskManagerCommand with Request
-  case object ListTasks                                             extends Request
-  case object ListAvailableTasks                                    extends Request
-  case class  ListAvailableTasksFrom(sources: List[String])         extends Request
+  case object ListTasks                                             extends TaskManagerRequest
+  case object ListTasksById                                         extends TaskManagerRequest
+  case class  ListTasksOf(taskIds: List[String])                    extends TaskManagerRequest
+  case object ListAvailableTasks                                    extends TaskManagerRequest
+  case class  ListAvailableTasksFrom(sources: List[String])         extends TaskManagerRequest
 
 
-  sealed trait TaskManagerResponse                                  extends Responce
+  sealed trait TaskManagerResponse extends Responce
   case class  TaskList(tasks: List[String])                         extends TaskManagerResponse
+  case class  TaskListById(tasks: Map[String, List[String]])        extends TaskManagerResponse
   case class  AvailableTaskList(tasks: List[String])                extends TaskManagerResponse
   case class  AvailableTaskMap(taskMap: Map[String, List[String]])  extends TaskManagerResponse
+
+  sealed trait TaskManagerEvent extends Event
+  case class TaskAdded(taskId: String, taskName: String)            extends TaskManagerEvent
+  case class TaskRemoved(taskName: String)                          extends TaskManagerEvent
 
 }
