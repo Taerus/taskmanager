@@ -7,7 +7,7 @@ import akka.duke.taskmanager.Task.Terminate
 class HelloWorldTask extends Task {
 
   def start() {
-    println("Hello World !")
+    println("| Hello World !")
     self ! Terminate
   }
 
