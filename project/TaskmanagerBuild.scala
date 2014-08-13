@@ -42,7 +42,7 @@ object TaskmanagerBuild extends Build {
       name := springName,
       libraryDependencies ++= springDependencies
     )
-  ) dependsOn(core)
+  ) dependsOn core
   
   lazy val swing: Project = Project(
     swingName,
@@ -51,7 +51,7 @@ object TaskmanagerBuild extends Build {
       name := swingName,
       libraryDependencies ++= swingDependencies
     )
-  ) dependsOn(core)
+  ) dependsOn core
   
   lazy val samples: Project = Project(
     samplesName,
@@ -59,6 +59,7 @@ object TaskmanagerBuild extends Build {
     settings = buildSettings ++ Seq(
       name := samplesName,
       libraryDependencies ++= samplesDependencies,
+      addCompilerPlugin("org.scalamacros" % ("paradise_"+Versions.scala) % Versions.paradise),
       publish:= (),
       publishLocal := ()
     )
