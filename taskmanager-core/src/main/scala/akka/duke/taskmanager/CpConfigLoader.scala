@@ -4,7 +4,7 @@ import com.typesafe.config.{ConfigRenderOptions, ConfigFactory, Config}
 import java.io.{PrintWriter, File}
 
 
-class CpConfigLoader( confDir: String = "config/",
+class CpConfigLoader( confDir: String = "config",
                       format: String = "#id-#name"
                     ) extends ConfigLoader {
 
@@ -22,7 +22,8 @@ class CpConfigLoader( confDir: String = "config/",
   }
 
   private def loadConf(name: String): Config = {
-    val path = getDir(confDir) + name + ".conf"
+    val path = s"${confDir.stripSuffix("/")}/$name.conf"
+    println(path)
     val file = new File(path)
     val conf = if(file.exists()) {
       ConfigFactory.parseFile(file)
@@ -33,7 +34,7 @@ class CpConfigLoader( confDir: String = "config/",
   }
 
   private def getDir(dir: String): String = {
-    confDir.trim match {
+    dir.trim match {
       case "" | null => ""
       case str if str.endsWith("/") => str
       case str => str + "/"

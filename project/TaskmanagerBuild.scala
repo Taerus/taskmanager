@@ -60,7 +60,8 @@ object TaskmanagerBuild extends Build {
       name := samplesName,
       libraryDependencies ++= samplesDependencies,
       publish:= (),
-      publishLocal := ()
+      publishLocal := (),
+      addCompilerPlugin("org.scalamacros" % ("paradise_"+Versions.scala) % Versions.paradise)
     )
   ) dependsOn(macros, core, swing, spring)
   
