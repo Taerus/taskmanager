@@ -5,8 +5,9 @@ import com.typesafe.config.Config
 
 trait ConfigLoader {
 
-  def load(name: String): Config
-  def load(id: String, name: String): Config
-  def save(config: Config, id: String, name: String) {}
+  def load(taskId: String): Config
+  def load(taskId: String, name: String): Config
+  def list(taskId: String): Set[String]
+  def save(config: Config, taskId: String, name: String) {}
 
 }
