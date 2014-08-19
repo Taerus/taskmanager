@@ -15,7 +15,7 @@ trait Configurable { this: ComposableActor =>
     val baseDirOpt = Context.get[String]("baseDir")
     Context("defaultConfigLoader") = baseDirOpt match {
       case Some(path) =>
-        new CpConfigLoader(confDir = path)
+        new CpConfigLoader(confDir = s"$path/config")
       case None =>
         new CpConfigLoader
     }

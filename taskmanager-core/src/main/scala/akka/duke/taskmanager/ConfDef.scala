@@ -1,12 +1,13 @@
 package akka.duke.taskmanager
 
-import com.typesafe.config.Config
+import com.typesafe.config.{ConfigFactory, Config}
 
 
 object ConfDef {
   def apply(configs: Config*) = new ConfDef(configs.reverse.reduceLeft(_ withFallback _))
   def apply(name: String) = new ConfDef(name)
   def apply(id: String, name: String) = new ConfDef(id, name)
+  def parseString(config: String) = ConfDef(ConfigFactory.parseString(config))
   def default = ConfDef("").default
 }
 

@@ -6,9 +6,6 @@ import scala.language.experimental.macros
 import scala.reflect.macros.Context
 
 
-/**
- *
- */
 class SimpleWorker extends StaticAnnotation {
   def macroTransform(annottees: Any*) = macro SimpleWorker.simpleWorker_impl
 }
@@ -113,7 +110,7 @@ object SimpleWorker {
       val createWorker: Tree = {
         var props: Tree =  q"akka.actor.Props(new $actorName())"
         if(routConf != null) props = q"$props.withRouter($routConf)"
-        q"val $actorRef = context.actorOf($props, $strName)"
+        q"val $actorRef = actorRefFactory.actorOf($props, $strName)"
       }
 
       val callMethod: Tree = {
@@ -160,11 +157,11 @@ object SimpleWorker {
         )
       }
 
-      val n = 120
-      val l1 = (n - strName.length)/2 - 1
-      val l2 = n - 2 - l1 - strName.length
 
-//      uncomment to see generated code
+////    uncomment to see generated code
+//      val n = 120
+//      val l1 = (n - strName.length)/2 - 1
+//      val l2 = n - 2 - l1 - strName.length
 //      println("#"*n + "\n#" + " "*l1 + strName + " "*l2 + "#\n" + "#"*n + "\n")
 //      println(generated.map(t => show(t)).mkString("\n\n"))
 //      println("\n" + "-"*n + "\n")

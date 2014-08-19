@@ -3,13 +3,11 @@ package akka.duke.taskmanager
 import akka.actor._
 import scala.collection.mutable
 import akka.duke.taskmanager.event.{Publisher, Listener}
-import akka.duke.taskmanager.Configurable.{ConfigurableCommand, AddConfig, SetConfig}
+import akka.duke.taskmanager.Configurable._
 import Message._
 import Task._
 import akka.duke.taskmanager.Message.BadRequest
 import scala.Some
-import akka.duke.taskmanager.Configurable.AddConfig
-import akka.duke.taskmanager.Configurable.SetConfig
 
 trait TaskManager extends ComposableActor with Configurable with Listener with Publisher with ActorLogging {
   import TaskManager._
@@ -100,6 +98,9 @@ trait TaskManager extends ComposableActor with Configurable with Listener with P
     case AddTaskConfig(confDef, taskName) =>
       forwardCommand(taskMap.get(taskName), AddConfig(confDef), taskName)
 
+    case ResetTaskConfig(taskName) =>
+      forwardCommand(taskMap.get(taskName), DefaultConfig, taskName)
+
   }
 
 }
@@ -113,6 +114,7 @@ object TaskManager {
   case class  TaskCmd(command: TaskCommand, taskName: String)       extends TaskManagerCommand
   case class  SetTaskConfig(confDef: ConfDef, taskName: String)     extends TaskManagerCommand
   case class  AddTaskConfig(confDef: ConfDef, taskName: String)     extends TaskManagerCommand
+  case class  ResetTaskConfig(taskName: String)                     extends TaskManagerCommand
   case class  ConfigTask(cmd: ConfigurableCommand, taskName: String)extends TaskManagerCommand
 
 

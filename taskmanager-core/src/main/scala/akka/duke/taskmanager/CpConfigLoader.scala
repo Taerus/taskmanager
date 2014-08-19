@@ -4,44 +4,42 @@ import com.typesafe.config.{ConfigRenderOptions, ConfigFactory, Config}
 import java.io.{PrintWriter, File}
 
 
-class CpConfigLoader( confDir: String = "config/",
-                      format: String = "#id-#name"
-                    ) extends ConfigLoader {
+class CpConfigLoader(confDir: String = "config") extends ConfigLoader {
 
-  override def load(name: String) = loadConf(name)
+  def load(taskId: String) = {
+    val f = new File(s"$confDir/$taskId.conf")
+    if (f.exists && f.isFile) {
+      ConfigFactory.parseFile(f)
+    } else {
+      ConfigFactory.empty()
+    }
+  }
 
-  override def load(id: String, name: String) = loadConf(getName(id, name))
+  def load(taskId: String, name: String) = {
+    val f = new File(s"$confDir/$taskId/$name.conf")
+    if(f.exists && f.isFile) {
+      ConfigFactory.parseFile(f)
+    } else {
+      ConfigFactory.empty()
+    }
+  }
 
-  override def save(config: Config, id: String, name: String = "_default_") {
-    val f = new File(getDir(confDir) + getName(id, name) + ".conf")
+  def list(taskId: String) = {
+    val dir = new File(s"$confDir/$taskId")
+    if(dir.exists && dir.isDirectory) {
+      dir.list.map(_.stripSuffix(".conf")).toSet
+    } else {
+      Set()
+    }
+  }
+
+  override def save(config: Config, taskId: String, name: String = "_default_") {
+    val f = new File(s"$confDir/$taskId/$name.conf")
     f.getParentFile.mkdirs()
 
     val writer = new PrintWriter(f)
     writer.print(config.root.render(ConfigRenderOptions.defaults.setOriginComments(false)))
     writer.close()
-  }
-
-  private def loadConf(name: String): Config = {
-    val path = getDir(confDir) + name + ".conf"
-    val file = new File(path)
-    val conf = if(file.exists()) {
-      ConfigFactory.parseFile(file)
-    } else {
-      ConfigFactory.empty()
-    }
-    conf withFallback ConfigFactory.parseResources(path)
-  }
-
-  private def getDir(dir: String): String = {
-    confDir.trim match {
-      case "" | null => ""
-      case str if str.endsWith("/") => str
-      case str => str + "/"
-    }
-  }
-
-  private def getName(id: String, name: String): String = {
-    format.trim.replace("#id", id.trim).replace("#name", name.trim)
   }
 
 }
