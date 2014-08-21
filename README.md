@@ -15,10 +15,10 @@ Add the following to your sbt build (for scala 2.10.4)
 resolvers += "TaskManager GitHub Repository" at "http://taerus.github.io/taskmanager/repository"
 
 dependencies ++= Seq(
-  "akka.duke" %%  "taskmanager-core"    % "1.0.1-SNAPSHOT",
-  "akka.duke" %%  "taskmanager-swing"   % "1.0.1-SNAPSHOT",
-  "akka.duke" %%  "taskmanager-spring"  % "1.0.1-SNAPSHOT",
-  "akka.duke" %%  "taskmanager-macros"  % "1.0.1-SNAPSHOT"
+  "akka.duke" %%  "taskmanager-core"    % "1.0.2-ALPHA",
+  "akka.duke" %%  "taskmanager-swing"   % "1.0.2-ALPHA",
+  "akka.duke" %%  "taskmanager-spring"  % "1.0.2-ALPHA",
+  "akka.duke" %%  "taskmanager-macros"  % "1.0.2-ALPHA"
 )
 ```
 
